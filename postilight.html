@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Postilight</title>
+<style>
+:root{--bg:#f4f5f7;--card:#fff;--tx:#1b1d22;--mut:#6b7280;--ac:#59b2fa;--bd:#e3e5ea;color-scheme:light dark}
+@media(prefers-color-scheme:dark){:root{--bg:#14161a;--card:#1e2127;--tx:#eceef2;--mut:#98a0ad;--bd:#2c313a}}
+*{box-sizing:border-box}[hidden]{display:none!important}
+body{margin:0;padding:16px;background:var(--bg);color:var(--tx);font:16px/1.4 -apple-system,system-ui,"Segoe UI",sans-serif}
+main{max-width:520px;margin:0 auto}
+h1{font-size:22px;margin:4px 0 12px}h2{font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:var(--mut);margin:0 0 10px}
+section{background:var(--card);border:1px solid var(--bd);border-radius:14px;padding:14px;margin-bottom:12px}
+button,.btn{font:inherit;color:var(--tx);background:var(--bg);border:1px solid var(--bd);border-radius:10px;padding:9px 12px;cursor:pointer}
+button:hover,.btn:hover{border-color:var(--ac)}button.on{background:var(--ac);border-color:var(--ac);color:#fff}
+button.main{background:var(--ac);border-color:var(--ac);color:#fff;width:100%;padding:12px}
+.row{display:flex;gap:8px;align-items:center;justify-content:space-between;margin:8px 0}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+input[type=range]{width:100%;accent-color:var(--ac)}input[type=text]{flex:1;font:inherit;padding:9px;border-radius:10px;border:1px solid var(--bd);background:var(--bg);color:var(--tx)}
+input[type=color]{width:56px;height:38px;border:0;background:none;padding:0}
+.s label{display:flex;justify-content:space-between;font-size:14px;color:var(--mut)}.s b{color:var(--tx)}
+small{color:var(--mut)}#st{min-height:1.4em;font-size:14px;color:var(--mut)}#st.err{color:#e5484d}
+</style>
+</head>
+<body>
+<main>
+<h1>Postilight</h1>
+<section id="conn">
+  <button class="main" id="go">Connecter la lampe</button>
+  <p><small>La lampe doit être allumée et non connectée à un autre appareil (téléphone, autre onglet).</small></p>
+  <p id="nobt" hidden><small>Ce navigateur ne gère pas le Web Bluetooth. Utilisez Chrome ou Edge sur Mac, ou l’app Bluefy sur iPhone.</small></p>
+</section>
+<div id="app" hidden>
+<section>
+  <div class="row"><b>Lumière</b><label><input type="checkbox" id="on"> allumée</label></div>
+  <div class="s"><label>Luminosité <b id="bl"></b></label><input type="range" id="bright" min="16" max="255"></div>
+</section>
+<section><h2>Mode</h2><div class="grid" id="modes"></div>
+  <div class="row"><span>Couleur unie</span><input type="color" id="col" value="#59b2fa"></div>
+  <small>« Maths » : cliquer à nouveau pour passer au motif suivant.</small>
+</section>
+<section><h2>Texte défilant</h2>
+  <div class="row"><input type="text" id="txt" maxlength="64" placeholder="Votre message (64 caractères max)"><button id="send">Envoyer</button></div>
+  <small>Caractères ASCII uniquement (accents retirés). Chaque texte est mémorisé dans la lampe (16 max).</small>
+  <div class="row"><button id="flipbtn">↕ Inverser l’affichage</button></div>
+  <small>Retourne tout l’affichage de la lampe, texte et images. Même réglage que « Retourner verticalement » plus bas.</small>
+</section>
+<section><h2>Image</h2>
+  <label class="btn" style="display:block;text-align:center">Choisir une image<input type="file" id="img" accept="image/*" hidden></label>
+  <p><small>Recadrée au carré puis réduite en 16 × 16 pixels. Pour un GIF, seule la première image est envoyée.</small></p>
+</section>
+<section><h2>Parcourir les contenus</h2>
+  <div class="grid"><button id="prev">◀ Précédent</button><button id="next">Suivant ▶</button><button id="del">Supprimer</button></div>
+  <div class="row"><button id="auto">Reprendre le défilement automatique</button></div>
+</section>
+<section class="s"><h2>Réglages</h2>
+  <div class="row"><span>Transition en fondu</span><input type="checkbox" id="fade"></div>
+  <div class="row"><span>Transition en défilement</span><input type="checkbox" id="scroll"></div>
+  <div class="row"><span>Retourner verticalement</span><input type="checkbox" id="flip"></div>
+  <div id="sl"></div>
+</section>
+<button id="bye">Déconnecter</button>
+</div>
+<p id="st"></p>
+</main>
+<script>
+const $=id=>document.getElementById(id);
+const SVC="506f7374-694c-6967-6874-000000000001";
+const ID={text:"02",image:"03",bright:"04",on:"05",mode:"06",trans:"07",gad:"08",imt:"09",trt:"10",fps:"11",its:"12",tts:"13",color:"14",cmd:"15",flip:"16"};
+const MODES=[["Image",0],["Animation",1],["Texte",2],["Couleur",3],["Maths",4],["Barres",5]];
+const SET=[["imt","Durée d’une image fixe (ms)",100,20000,100],["trt","Durée de transition (ms)",100,10000,100],["gad","Durée de boucle GIF (ms)",1000,10000,100],["fps","Images par seconde (GIF)",1,30,1],["its","Vitesse de défilement des images",1,50,1],["tts","Vitesse de défilement du texte",1,10,1]];
+let dev,ch={},q=Promise.resolve(),mode=-1,ctl=false;const tm={};
+
+const st=(m,e)=>{$("st").textContent=m;$("st").className=e?"err":""};
+const enq=fn=>(q=q.then(fn).catch(e=>st("Erreur : "+e.message,1)));
+const wr=(c,b)=>c.writeValueWithResponse?c.writeValueWithResponse(b):c.writeValue(b);
+const i32=v=>{const b=new Uint8Array(4);new DataView(b.buffer).setUint32(0,v>>>0,true);return b};
+const wInt=(k,v)=>enq(()=>wr(ch[k],i32(v)));
+const rInt=k=>enq(async()=>(await ch[k].readValue()).getUint32(0,true));
+const slide=(k,v)=>{clearTimeout(tm[k]);tm[k]=setTimeout(()=>wInt(k,v),120)};
+const cmd=k=>enq(()=>wr(ch.cmd,new TextEncoder().encode(k)));
+
+function showMode(m){mode=m;document.querySelectorAll("#modes button").forEach(b=>b.classList.toggle("on",+b.dataset.m===m))}
+function setMode(m){showMode(m);return wInt("mode",m)}
+
+MODES.forEach(([n,m])=>{const b=document.createElement("button");b.textContent=n;b.dataset.m=m;b.onclick=()=>setMode(m);$("modes").append(b)});
+SET.forEach(([k,n,min,max,step])=>{const d=document.createElement("div");d.innerHTML=`<label>${n} <b id="${k}l"></b></label><input type="range" id="${k}" min="${min}" max="${max}" step="${step}">`;$("sl").append(d);
+  $(k).oninput=e=>{$(k+"l").textContent=e.target.value;slide(k,+e.target.value)}});
+
+$("on").onchange=e=>wInt("on",e.target.checked?1:0);
+$("bright").oninput=e=>{$("bl").textContent=e.target.value;slide("bright",+e.target.value)};
+const setFlip=v=>{$("flip").checked=v;$("flipbtn").classList.toggle("on",v);return wInt("flip",v?1:0)};
+$("flip").onchange=e=>setFlip(e.target.checked);
+$("flipbtn").onclick=()=>setFlip(!$("flip").checked);
+$("fade").onchange=$("scroll").onchange=()=>wInt("trans",($("fade").checked?1:0)|($("scroll").checked?2:0));
+$("col").oninput=e=>{const h=e.target.value;clearTimeout(tm.c);tm.c=setTimeout(()=>{if(mode!==3)setMode(3);
+  const b=Uint8Array.from([1,3,5].map(i=>parseInt(h.substr(i,2),16)));enq(()=>wr(ch.color,b))},120)};
+
+const ascii=s=>s.normalize("NFD").replace(/[\u0300-\u036f]/g,"").replace(/[^\x20-\x7e]/g,"?").slice(0,64);
+$("send").onclick=()=>{const t=ascii($("txt").value);if(!t)return;setMode(2);
+  enq(()=>wr(ch.text,new TextEncoder().encode(t+"\0")))};
+
+$("img").onchange=async e=>{
+  const f=e.target.files[0];if(!f)return;
+  try{
+    const bm=await createImageBitmap(f),c=document.createElement("canvas");c.width=c.height=16;
+    const x=c.getContext("2d",{willReadFrequently:true}),s=Math.min(bm.width,bm.height);
+    x.imageSmoothingQuality="high";x.drawImage(bm,(bm.width-s)/2,(bm.height-s)/2,s,s,0,0,16,16);
+    const d=x.getImageData(0,0,16,16).data,o=new Uint8Array(512);
+    for(let i=0;i<256;i++){const v=((d[i*4]>>3)<<11)|((d[i*4+1]>>2)<<5)|(d[i*4+2]>>3);o[i*2]=v&255;o[i*2+1]=v>>8}
+    setMode(0);
+    for(let p=0;p<4;p++){const b=new Uint8Array(132);b.set([0,1,p,4]);b.set(o.subarray(p*128,p*128+128),4);enq(()=>wr(ch.image,b))}
+  }catch(err){st("Image illisible : "+err.message,1)}
+  e.target.value="";
+};
+
+const nav=k=>{if(!ctl){cmd("C");ctl=true}cmd(k)};
+$("prev").onclick=()=>nav("-");$("next").onclick=()=>nav("+");
+$("del").onclick=()=>{if(confirm("Supprimer le contenu affiché dans la lampe ?"))nav("d")};
+$("auto").onclick=()=>{ctl=false;cmd("c")};
+$("bye").onclick=()=>dev&&dev.gatt.disconnect();
+
+async function sync(){
+  let v;
+  if((v=await rInt("mode"))!=null)showMode(v);
+  if((v=await rInt("bright"))!=null){$("bright").value=v;$("bl").textContent=v}
+  if((v=await rInt("on"))!=null)$("on").checked=!!v;
+  if((v=await rInt("flip"))!=null){$("flip").checked=v===1;$("flipbtn").classList.toggle("on",v===1)}
+  if((v=await rInt("trans"))!=null){$("fade").checked=!!(v&1);$("scroll").checked=!!(v&2)}
+  for(const [k] of SET)if((v=await rInt(k))!=null){$(k).value=v;$(k+"l").textContent=v}
+}
+
+async function connect(){
+  try{
+    dev=await navigator.bluetooth.requestDevice({filters:[{services:[SVC]}]});
+    dev.addEventListener("gattserverdisconnected",()=>{$("app").hidden=true;$("conn").hidden=false;ch={};ctl=false;st("Lampe déconnectée.")});
+    st("Connexion…");
+    const sv=await (await dev.gatt.connect()).getPrimaryService(SVC);
+    for(const k in ID)ch[k]=await sv.getCharacteristic("506f7374-694c-6967-6875-"+ID[k].padStart(12,"0"));
+    $("conn").hidden=true;$("app").hidden=false;st("Connecté à "+dev.name+".");
+    await sync();
+  }catch(e){st(e.name==="NotFoundError"?"Aucune lampe sélectionnée.":"Connexion impossible : "+e.message,1)}
+}
+if(!navigator.bluetooth){$("nobt").hidden=false;$("go").disabled=true}
+$("go").onclick=connect;
+</script>
+</body>
+</html>
